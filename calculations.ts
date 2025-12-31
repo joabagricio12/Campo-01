@@ -1,78 +1,138 @@
 
 import { WegMotorData, DimensioningResult, ProjectSummary } from './types';
 
-// Tabela 36 NBR 5410 - Método B1 (PVC 70°C)
 const CABLE_CAPACITY = [
-  { size: 1.5, amp: 15.5 }, 
-  { size: 2.5, amp: 21 }, 
-  { size: 4, amp: 28 },
-  { size: 6, amp: 36 }, 
-  { size: 10, amp: 50 }, 
-  { size: 16, amp: 68 }, 
-  { size: 25, amp: 89 }, 
-  { size: 35, amp: 110 }, 
-  { size: 50, amp: 134 },
-  { size: 70, amp: 171 }, 
-  { size: 95, amp: 207 }, 
-  { size: 120, amp: 239 },
-  { size: 150, amp: 272 }
+  { size: 1.5, amp: 17.5 },
+  { size: 2.5, amp: 24 },
+  { size: 4, amp: 32 },
+  { size: 6, amp: 41 },
+  { size: 10, amp: 57 },
+  { size: 16, amp: 76 },
+  { size: 25, amp: 101 },
+  { size: 35, amp: 125 },
+  { size: 50, amp: 151 },
+  { size: 70, amp: 192 },
+  { size: 95, amp: 232 },
+  { size: 120, amp: 269 },
+  { size: 150, amp: 309 },
+  { size: 185, amp: 353 },
+  { size: 240, amp: 415 }
 ];
 
 export const calculateDimensioning = (motor: WegMotorData): DimensioningResult => {
   const In = motor.currentIn;
-  
-  // Fator Sênior: 1.25 (Norma) * 1.20 (Segurança Queda de Tensão/Partida) = 1.50x
-  const targetAmp = In * 1.50; 
-  
-  let selected = CABLE_CAPACITY.find(c => c.amp >= targetAmp) || CABLE_CAPACITY[CABLE_CAPACITY.length - 1];
+  const distance = 100;
+  const voltage = 380;
+  const maxDeltaV = 4;
 
-  // REGRAS DE PRECISÃO SÊNIOR PARA TODA A LINHA (NBR 5410 / WEG)
-  if (motor.cv <= 1 && selected.size < 1.5) selected = CABLE_CAPACITY.find(c => c.size === 1.5)!;
-  if (motor.cv > 1 && motor.cv <= 4 && selected.size < 2.5) selected = CABLE_CAPACITY.find(c => c.size === 2.5)!;
-  if (motor.cv > 4 && motor.cv <= 6 && selected.size < 4) selected = CABLE_CAPACITY.find(c => c.size === 4)!;
-  if (motor.cv > 6 && motor.cv <= 12.5 && selected.size < 6) selected = CABLE_CAPACITY.find(c => c.size === 6)!; // 10CV = 6mm²
-  if (motor.cv > 12.5 && motor.cv <= 20 && selected.size < 10) selected = CABLE_CAPACITY.find(c => c.size === 10)!;
-  if (motor.cv > 20 && motor.cv <= 30 && selected.size < 16) selected = CABLE_CAPACITY.find(c => c.size === 16)!;
-  if (motor.cv > 30 && motor.cv <= 50 && selected.size < 25) selected = CABLE_CAPACITY.find(c => c.size === 25)!;
-  if (motor.cv > 50 && motor.cv <= 75 && selected.size < 35) selected = CABLE_CAPACITY.find(c => c.size === 35)!;
-  if (motor.cv > 75 && motor.cv <= 100 && selected.size < 50) selected = CABLE_CAPACITY.find(c => c.size === 50)!;
-  if (motor.cv > 100 && motor.cv <= 150 && selected.size < 70) selected = CABLE_CAPACITY.find(c => c.size === 70)!;
-  if (motor.cv > 150 && motor.cv <= 200 && selected.size < 95) selected = CABLE_CAPACITY.find(c => c.size === 95)!;
-  if (motor.cv > 200 && selected.size < 120) selected = CABLE_CAPACITY.find(c => c.size === 120)!;
+  const requiredIz = In * 1.25;
+  let selectedCable = CABLE_CAPACITY.find(c => c.amp >= requiredIz) || CABLE_CAPACITY[CABLE_CAPACITY.length - 1];
 
-  const breakerVal = Math.ceil(In * 1.4);
-  const breaker = motor.cv <= 40 ? `MPW40-${In.toFixed(1)}A` : `DWA-${breakerVal}A`;
+  const rho = 0.021;
+  const deltaVVolts = (maxDeltaV / 100) * voltage;
+  const minSectionVoltageDrop = (Math.sqrt(3) * distance * In * rho) / deltaVVolts;
   
-  let contactor = "CWM9";
-  if (In > 9) contactor = "CWM12";
-  if (In > 12) contactor = "CWM18";
-  if (In > 18) contactor = "CWM25";
-  if (In > 25) contactor = "CWM32";
-  if (In > 32) contactor = "CWM40";
-  if (In > 40) contactor = "CWM50";
-  if (In > 50) contactor = "CWM65";
+  if (selectedCable.size < minSectionVoltageDrop) {
+    selectedCable = CABLE_CAPACITY.find(c => c.size >= minSectionVoltageDrop) || CABLE_CAPACITY[CABLE_CAPACITY.length - 1];
+  }
+
+  const contactorRating = In * 1.25;
+  let contactorModel = "";
+  if (contactorRating <= 9) contactorModel = "CWM9";
+  else if (contactorRating <= 12) contactorModel = "CWM12";
+  else if (contactorRating <= 18) contactorModel = "CWM18";
+  else if (contactorRating <= 25) contactorModel = "CWM25";
+  else if (contactorRating <= 32) contactorModel = "CWM32";
+  else if (contactorRating <= 40) contactorModel = "CWM40";
+  else if (contactorRating <= 50) contactorModel = "CWM50";
+  else if (contactorRating <= 65) contactorModel = "CWM65";
+  else if (contactorRating <= 80) contactorModel = "CWM80";
+  else if (contactorRating <= 95) contactorModel = "CWM95";
+  else contactorModel = `CWM${Math.ceil(contactorRating / 10) * 10}`;
+
+  let breaker = "";
+  let protType = "";
+  let softStarter = undefined;
+
+  if (motor.cv >= 5) {
+    if (In <= 10) softStarter = "SSW05-10A";
+    else if (In <= 16) softStarter = "SSW05-16A";
+    else if (In <= 23) softStarter = "SSW05-23A";
+    else if (In <= 30) softStarter = "SSW05-30A";
+    else if (In <= 45) softStarter = "SSW07-45A";
+    else if (In <= 60) softStarter = "SSW07-60A";
+    else if (In <= 85) softStarter = "SSW07-85A";
+    else if (In <= 110) softStarter = "SSW07-110A";
+    else softStarter = `SSW06-${Math.ceil(In * 1.1)}A`;
+  }
+
+  if (motor.cv <= 40) {
+    const adjMin = (In * 0.9).toFixed(1);
+    const adjMax = (In * 1.15).toFixed(1);
+    breaker = `MPW (Ajuste: ${adjMin}A a ${adjMax}A)`;
+    protType = "Disjuntor-Motor";
+  } else {
+    const breakerIn = Math.ceil(In * 1.4 / 10) * 10;
+    breaker = `DWA ${breakerIn}A`;
+    protType = "Proteção Termomagnética";
+  }
 
   return {
     motor,
     circuitBreaker: breaker,
-    cableSize: `${selected.size}mm²`,
-    contactor: contactor,
-    protectionType: "W22 IE3 Premium",
-    softStarter: motor.cv >= 10 ? `SSW07` : undefined,
-    inverter: (motor.cv >= 1 && motor.cv < 10) ? `CFW500` : undefined
+    cableSize: `${selectedCable.size} mm²`,
+    contactor: `${contactorModel} (AC-3)`,
+    protectionType: protType,
+    softStarter
   };
 };
 
 export const calculateGeneralSummary = (motors: WegMotorData[]): ProjectSummary => {
+  const motorCount = motors.length;
+  if (motorCount === 0) {
+    return {
+      motorCount: 0,
+      motorList: [],
+      totalCv: 0,
+      totalKw: 0,
+      totalIn: 0,
+      totalIp: 0,
+      recommendedMainBreaker: "N/A",
+      softStarterCount: 0
+    };
+  }
+
   const totalCv = motors.reduce((acc, m) => acc + m.cv, 0);
+  const totalKw = motors.reduce((acc, m) => acc + m.kw, 0);
   const totalIn = motors.reduce((acc, m) => acc + m.currentIn, 0);
-  const mainBreaker = [40, 63, 100, 125, 160, 200, 250, 400, 630, 800].find(r => r >= totalIn * 1.25) || 1250;
+  const softStarterCount = motors.filter(m => m.cv >= 5).length;
+
+  const totalIp = motors.reduce((acc, m) => {
+    const factor = m.cv >= 5 ? 3.0 : 7.5;
+    return acc + (m.currentIn * factor);
+  }, 0);
+
+  const mainInRequired = totalIn * 1.25;
+  const standardRatings = [16, 20, 25, 32, 40, 50, 63, 80, 100, 125, 160, 200, 250, 300, 400, 500, 630, 800, 1000, 1250];
+  const breakerRating = standardRatings.find(r => r >= mainInRequired) || Math.ceil(mainInRequired / 10) * 10;
+
+  const countMap: Record<number, number> = {};
+  motors.forEach(m => {
+    countMap[m.cv] = (countMap[m.cv] || 0) + 1;
+  });
+  
+  const motorList = Object.entries(countMap)
+    .map(([cv, count]) => ({ cv: parseFloat(cv), count }))
+    .sort((a, b) => b.cv - a.cv);
 
   return {
-    motorCount: motors.length,
-    totalCv: parseFloat(totalCv.toFixed(1)),
-    totalKw: parseFloat((totalCv * 0.735).toFixed(1)),
-    totalIn: parseFloat(totalIn.toFixed(1)),
-    recommendedMainBreaker: `Disjuntor Geral ${mainBreaker}A`
+    motorCount,
+    motorList,
+    totalCv: parseFloat(totalCv.toFixed(2)),
+    totalKw: parseFloat(totalKw.toFixed(2)),
+    totalIn: parseFloat(totalIn.toFixed(2)),
+    totalIp: parseFloat(totalIp.toFixed(2)),
+    recommendedMainBreaker: `DWA ${breakerRating}A`,
+    softStarterCount
   };
 };
