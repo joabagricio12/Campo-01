@@ -1,6 +1,18 @@
 {
   "name": "CAMPO FORTE",
-  "description": "Dimensionamento técnico de motores WEG com sugestão de Soft-Starter e cálculo de carga consolidado.",
+  "description": "Sistema de dimensionamento técnico para engenharia elétrica.",
+  "icons": [
+    {
+      "src": "icon.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "icon.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ],
   "requestFramePermissions": [
     "camera"
   ]

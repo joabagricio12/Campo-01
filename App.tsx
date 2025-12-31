@@ -1,319 +1,362 @@
 
 import React, { useState, useEffect, useRef } from 'react';
-import { WegMotorData } from './types';
+import { WegMotorData, DimensioningResult } from './types';
 import { WEG_MOTORS, getMotorByCv } from './motorData';
 import { calculateDimensioning, calculateGeneralSummary } from './calculations';
+import { GoogleGenAI } from "@google/genai";
 
-const MotorImg = () => (
-  <svg width="60" height="60" viewBox="0 0 200 200" fill="none" xmlns="http://www.w3.org/2000/svg">
-    <rect x="50" y="70" width="100" height="80" rx="2" fill="#1e293b" />
-    <rect x="35" y="85" width="15" height="50" fill="#1e293b" />
-    <rect x="150" y="85" width="10" height="50" fill="#1e293b" />
-    <rect x="160" y="100" width="25" height="20" fill="#1e293b" />
-    <path d="M80 70V55H120V70" stroke="#1e293b" strokeWidth="5" strokeLinecap="round"/>
-  </svg>
-);
+interface PageData {
+  id: string;
+  type: 'report' | 'materials' | 'summary';
+  title: string;
+  content: any[];
+  text: string;
+}
 
 const App: React.FC = () => {
-  const [reportTitle, setReportTitle] = useState('');
-  const [contentItems, setContentItems] = useState<{id: string, type: 'text' | 'motor' | 'summary' | 'list', value: string}[]>([
-    { id: 'initial-text', type: 'text', value: '' }
+  const [pages, setPages] = useState<PageData[]>([
+    { id: 'p1', type: 'report', title: 'LAUDO DE ENGENHARIA ELÉTRICA', content: [{ id: 't1', type: 'text', value: '' }], text: '' }
   ]);
   const [headerImage, setHeaderImage] = useState<string | null>(null);
   const [isLocked, setIsLocked] = useState(false);
+  const [aiPanelOpen, setAiPanelOpen] = useState(false);
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiResponse, setAiResponse] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<'inicio' | 'inserir' | 'engenharia'>('inicio');
+  
   const reportRef = useRef<HTMLDivElement>(null);
-
   const currentDate = new Date().toLocaleDateString('pt-BR');
 
-  useEffect(() => {
-    const saved = localStorage.getItem('campo-forte-v20');
-    if (saved) {
-      const parsed = JSON.parse(saved);
-      setReportTitle(parsed.reportTitle || '');
-      setContentItems(parsed.contentItems || [{ id: 'initial-text', type: 'text', value: '' }]);
-      setHeaderImage(parsed.headerImage || null);
-    }
-  }, []);
+  // IA Sênior Setup
+  const callSeniorEngineerAI = async (mode: 'audit' | 'optimize' | 'chat', userQuery?: string) => {
+    setAiLoading(true);
+    setAiPanelOpen(true);
+    try {
+      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+      const model = 'gemini-3-pro-preview'; 
+      
+      const allMotors = pages.flatMap(p => p.content).filter(i => i.type === 'motor').map(i => getMotorByCv(parseFloat(i.value)));
+      const summary = calculateGeneralSummary(allMotors.filter((m): m is WegMotorData => !!m));
+      
+      const systemInstruction = `VOCÊ É O ENGENHEIRO CHEFE DA CAMPO FORTE.
+Sua especialidade é auditoria técnica de sistemas industriais trifásicos.
+Sua comunicação deve ser: Altamente técnica, formal, baseada na NBR 5410 e visando Eficiência Energética.
 
-  useEffect(() => {
-    const data = { reportTitle, contentItems, headerImage };
-    localStorage.setItem('campo-forte-v20', JSON.stringify(data));
-  }, [reportTitle, contentItems, headerImage]);
+REGRAS DE OURO:
+1. Sempre avalie a necessidade de INVERSORES DE FREQUÊNCIA (VFD) da WEG série CFW500/CFW11. 
+2. Se houver motores acima de 5CV, avalie se a partida suave (Soft-Starter) ou o VFD é melhor para evitar picos de ${summary.totalIp}A.
+3. Mencione a necessidade de banco de capacitores se o Fator de Potência médio for baixo.
+4. Organize seu parecer com cabeçalhos claros: [ANÁLISE DE CARGA], [PROTEÇÃO E COORDENAÇÃO], [RECOMENDAÇÕES NBR 5410].
+5. Use tabelas em Markdown se for listar materiais.`;
 
-  const addMotor = () => {
-    if (isLocked) return;
-    setContentItems([...contentItems, { id: Math.random().toString(36).substr(2, 9), type: 'motor', value: '1' }]);
-  };
+      let prompt = userQuery || "";
+      if (mode === 'audit') prompt = "Realize uma auditoria completa nos motores listados. Verifique se o disjuntor geral de " + summary.recommendedMainBreaker + " está corretamente dimensionado para a carga total de " + summary.totalIn + "A e pico de " + summary.totalIp + "A.";
+      if (mode === 'optimize') prompt = "Como posso otimizar este sistema para reduzir a conta de energia e aumentar a vida útil dos motores usando tecnologia WEG?";
 
-  const addText = () => {
-    if (isLocked) return;
-    setContentItems([...contentItems, { id: Math.random().toString(36).substr(2, 9), type: 'text', value: '' }]);
-  };
-
-  const addSummary = () => {
-    if (isLocked) return;
-    setContentItems([...contentItems, { id: Math.random().toString(36).substr(2, 9), type: 'summary', value: 'general' }]);
-  };
-
-  const addMaterialsList = () => {
-    if (isLocked) return;
-    setContentItems([...contentItems, { id: Math.random().toString(36).substr(2, 9), type: 'list', value: '' }]);
-  };
-
-  const removeItem = (id: string) => {
-    if (isLocked) return;
-    if (contentItems.length <= 1) return;
-    setContentItems(contentItems.filter(item => item.id !== id));
-  };
-
-  const updateItem = (id: string, value: string) => {
-    if (isLocked) return;
-    setContentItems(contentItems.map(item => item.id === id ? { ...item, value } : item));
-  };
-
-  const handleHeaderUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onloadend = () => setHeaderImage(reader.result as string);
-      reader.readAsDataURL(file);
+      const response = await ai.models.generateContent({ 
+        model, 
+        contents: prompt, 
+        config: { systemInstruction, temperature: 0.1 } 
+      });
+      setAiResponse(response.text);
+    } catch (e) {
+      setAiResponse("ERRO DE CONEXÃO COM O SERVIDOR DE ENGENHARIA.");
+    } finally {
+      setAiLoading(false);
     }
   };
 
-  const generatePDF = async () => {
-    if (!reportRef.current) return;
-    const canvas = await (window as any).html2canvas(reportRef.current, { scale: 2, useCORS: true });
-    const imgData = canvas.toDataURL('image/png');
+  const addPage = (type: 'report' | 'materials' | 'summary') => {
+    const titles = { report: 'LAUDO TÉCNICO', materials: 'ESPECIFICAÇÃO DE MATERIAIS', summary: 'MEMORIAL DE CÁLCULO' };
+    setPages([...pages, { id: Math.random().toString(36).substr(2, 9), type, title: titles[type], content: type === 'report' ? [{ id: 't1', type: 'text', value: '' }] : [], text: '' }]);
+  };
+
+  const addItem = (pageId: string, type: 'text' | 'motor') => {
+    setPages(pages.map(p => p.id === pageId ? { ...p, content: [...p.content, { id: Math.random().toString(36).substr(2, 9), type, value: type === 'motor' ? '1' : '' }] } : p));
+  };
+
+  const updateItem = (pageId: string, itemId: string, value: string) => {
+    setPages(pages.map(p => p.id === pageId ? { ...p, content: p.content.map(i => i.id === itemId ? { ...i, value } : i) } : p));
+  };
+
+  const downloadPDF = async () => {
     const { jsPDF } = (window as any).jspdf;
     const pdf = new jsPDF('p', 'mm', 'a4');
-    const pdfWidth = pdf.internal.pageSize.getWidth();
-    const pdfHeight = (canvas.height * pdfWidth) / canvas.width;
-    let heightLeft = pdfHeight;
-    let position = 0;
-    const pageHeight = pdf.internal.pageSize.getHeight();
-    
-    pdf.addImage(imgData, 'PNG', 0, position, pdfWidth, pdfHeight);
-    heightLeft -= pageHeight;
-    while (heightLeft >= 0) {
-      position = heightLeft - pdfHeight;
-      pdf.addPage();
-      pdf.addImage(imgData, 'PNG', 0, position, pdfWidth, pdfHeight);
-      heightLeft -= pageHeight;
+    for (let i = 0; i < pages.length; i++) {
+      const el = document.getElementById(`page-${pages[i].id}`);
+      if (el) {
+        const canvas = await (window as any).html2canvas(el, { scale: 2 });
+        if (i > 0) pdf.addPage();
+        pdf.addImage(canvas.toDataURL('image/png'), 'PNG', 0, 0, 210, 297);
+      }
     }
-    pdf.save(`CAMPO_FORTE_PROJETO.pdf`);
+    pdf.save('CAMPO_FORTE_PROJETO.pdf');
   };
 
-  const LogoHeader = () => (
-    <div className="flex justify-center w-full mb-8 pt-4">
-      {headerImage ? (
-        <img 
-          src={headerImage} 
-          alt="Logo" 
-          className="max-h-24 object-contain cursor-pointer hover:opacity-80 transition" 
-          onClick={() => !isLocked && document.getElementById('global-logo-input')?.click()}
-        />
-      ) : (
-        <div 
-          className="w-full h-16 border-2 border-dashed border-slate-200 flex items-center justify-center text-[10px] text-slate-400 font-bold cursor-pointer hover:bg-slate-50 transition no-print"
-          onClick={() => document.getElementById('global-logo-input')?.click()}
-        >
-          CLIQUE PARA INSERIR LOGOTIPO (APARECERÁ EM TODAS AS PÁGINAS)
-        </div>
-      )}
-      <input id="global-logo-input" type="file" className="hidden" onChange={handleHeaderUpload} />
-    </div>
-  );
-
   return (
-    <div className="min-h-screen bg-slate-300 pb-20 font-sans text-slate-900">
-      {/* Menu Superior - Engenharia */}
-      <nav className="sticky top-0 z-50 bg-slate-900 border-b border-slate-700 px-6 py-3 no-print flex items-center justify-between shadow-2xl">
-        <div className="flex items-center gap-4">
-          <div className="bg-white text-slate-900 px-2 py-1 rounded font-black text-xs tracking-tighter">CAMPO FORTE</div>
-          <div className="flex gap-2">
-            <button onClick={addMotor} className="bg-slate-700 hover:bg-slate-600 text-white px-4 py-2 rounded-sm text-[10px] font-bold uppercase transition">+ MOTOR</button>
-            <button onClick={addText} className="bg-slate-700 hover:bg-slate-600 text-white px-4 py-2 rounded-sm text-[10px] font-bold uppercase transition">+ TEXTO</button>
-            <button onClick={addSummary} className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-sm text-[10px] font-bold uppercase transition">+ RESUMO TÉCNICO</button>
-            <button onClick={addMaterialsList} className="bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2 rounded-sm text-[10px] font-bold uppercase transition">+ LISTA DE MATERIAL</button>
+    <div className="min-h-screen bg-[#f3f2f1] flex flex-col items-center font-sans selection:bg-blue-200">
+      
+      {/* MS WORD STYLE RIBBON */}
+      <div className="w-full bg-[#2b579a] text-white no-print shadow-xl sticky top-0 z-[100]">
+        <div className="px-4 py-1 flex items-center justify-between border-b border-blue-800">
+          <div className="flex items-center gap-4">
+            <div className="bg-white p-1 rounded">
+              <div className="w-4 h-4 bg-[#2b579a]"></div>
+            </div>
+            <span className="text-xs font-bold tracking-widest uppercase">Campo Forte - Word Station</span>
+          </div>
+          <div className="flex items-center gap-4 text-[10px] font-medium opacity-80">
+            <span>Arquivo</span><span>Editar</span><span>Exibir</span><span>Ajuda</span>
           </div>
         </div>
         
-        <div className="flex items-center gap-4">
-          <button onClick={() => setIsLocked(!isLocked)} className={`px-4 py-2 rounded-sm text-[10px] font-bold uppercase transition ${isLocked ? 'bg-red-600 text-white shadow-[0_0_15px_rgba(220,38,38,0.5)]' : 'bg-slate-200 text-slate-900'}`}>
-            {isLocked ? 'MODO PDF ATIVO' : 'BLOQUEAR PARA PDF'}
-          </button>
-          <button onClick={generatePDF} className="bg-white hover:bg-slate-100 text-slate-900 px-6 py-2 rounded-sm text-[10px] font-bold uppercase transition shadow-xl">GERAR ARQUIVO</button>
-        </div>
-      </nav>
-
-      <div ref={reportRef} className="max-w-[210mm] mx-auto mt-8 mb-20 bg-transparent flex flex-col gap-0">
-        
-        {/* PÁGINA 1: LAUDO TÉCNICO */}
-        <div className="bg-white min-h-[297mm] p-[20mm] relative flex flex-col shadow-2xl mb-4" style={{ fontFamily: "'Times New Roman', Times, serif" }}>
-          <LogoHeader />
+        <div className="bg-[#f3f2f1] text-slate-700 px-6 py-2 flex flex-col border-b border-slate-300">
+          <div className="flex gap-6 mb-2">
+            {['Início', 'Inserir', 'Engenharia'].map((tab) => (
+              <button 
+                key={tab}
+                onClick={() => setActiveTab(tab.toLowerCase() as any)}
+                className={`text-[11px] font-bold px-1 pb-1 transition-all ${activeTab === tab.toLowerCase() ? 'border-b-2 border-blue-600 text-blue-700' : 'text-slate-500 hover:text-slate-800'}`}
+              >
+                {tab}
+              </button>
+            ))}
+          </div>
           
-          <header className="mb-10 w-full flex flex-col items-center">
-            <textarea 
-              className="w-full text-center text-3xl font-bold uppercase bg-transparent border-none focus:outline-none placeholder-slate-200 resize-none overflow-hidden" 
-              placeholder="TÍTULO DO LAUDO TÉCNICO" 
-              rows={1}
-              value={reportTitle} 
-              onChange={(e) => setReportTitle(e.target.value)} 
-              disabled={isLocked}
-              onInput={(e) => {
-                const target = e.target as HTMLTextAreaElement;
-                target.style.height = 'auto';
-                target.style.height = target.scrollHeight + 'px';
-              }}
-            />
-            <div className="w-1/3 h-0.5 bg-slate-900 mt-2"></div>
-          </header>
+          <div className="flex items-center gap-4 py-2 h-14 overflow-x-auto">
+            {activeTab === 'inicio' && (
+              <>
+                <div className="flex flex-col items-center gap-1 border-r border-slate-300 pr-4">
+                  <button onClick={() => addPage('report')} className="p-2 hover:bg-slate-200 rounded transition"><div className="w-6 h-6 border-2 border-slate-400"></div></button>
+                  <span className="text-[9px] font-bold uppercase text-slate-500">Nova Página</span>
+                </div>
+                <div className="flex items-center gap-2 border-r border-slate-300 pr-4">
+                  <button onClick={downloadPDF} className="bg-white border border-slate-300 px-4 py-1.5 rounded text-[10px] font-black shadow-sm hover:bg-white transition">SALVAR PDF</button>
+                  <button onClick={() => setIsLocked(!isLocked)} className={`px-4 py-1.5 rounded text-[10px] font-black shadow-sm transition ${isLocked ? 'bg-red-500 text-white' : 'bg-green-600 text-white'}`}>{isLocked ? 'MODO LEITURA' : 'MODO EDIÇÃO'}</button>
+                </div>
+              </>
+            )}
+            {activeTab === 'inserir' && (
+              <>
+                <button onClick={() => addItem(pages[0].id, 'text')} className="flex flex-col items-center gap-1 px-3 hover:bg-slate-200 py-1 rounded">
+                  <span className="text-lg font-black">T</span>
+                  <span className="text-[9px] font-bold uppercase">Texto</span>
+                </button>
+                <button onClick={() => addItem(pages[0].id, 'motor')} className="flex flex-col items-center gap-1 px-3 hover:bg-slate-200 py-1 rounded">
+                  <div className="w-5 h-5 border-2 border-slate-800 rounded-full flex items-center justify-center font-black">M</div>
+                  <span className="text-[9px] font-bold uppercase">Motor WEG</span>
+                </button>
+              </>
+            )}
+            {activeTab === 'engenharia' && (
+              <div className="flex items-center gap-3">
+                <button onClick={() => callSeniorEngineerAI('audit')} className="bg-blue-700 text-white px-4 py-2 rounded-lg text-[10px] font-black shadow-lg hover:bg-blue-800 transition">AUDITORIA NBR 5410</button>
+                <button onClick={() => callSeniorEngineerAI('optimize')} className="bg-indigo-600 text-white px-4 py-2 rounded-lg text-[10px] font-black shadow-lg hover:bg-indigo-700 transition">EFICIÊNCIA WEG</button>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
 
-          <div className="flex flex-col flex-1 gap-6">
-            {contentItems.map((item) => {
-              if (item.type === 'text') {
-                return (
+      {/* AI SIDE PANEL - INDUSTRIAL CONSOLE */}
+      <div className={`fixed right-0 top-0 h-full w-full md:w-[480px] bg-[#1a1c24] shadow-2xl z-[200] transition-transform duration-500 ${aiPanelOpen ? 'translate-x-0' : 'translate-x-full'} border-l border-slate-700`}>
+        <div className="p-6 h-full flex flex-col text-slate-100 font-mono">
+          <div className="flex justify-between items-center mb-6 border-b border-slate-700 pb-4">
+            <div>
+              <h2 className="text-blue-400 font-black text-sm uppercase tracking-widest">Consultor Sênior IA</h2>
+              <p className="text-[9px] text-slate-500">Análise de Redes de Potência v11.0</p>
+            </div>
+            <button onClick={() => setAiPanelOpen(false)} className="text-slate-400 hover:text-white text-3xl">&times;</button>
+          </div>
+          
+          <div className="flex-1 overflow-y-auto mb-6 bg-black/40 p-5 rounded-lg border border-slate-800 text-xs leading-relaxed space-y-4">
+            {aiResponse ? (
+              aiResponse.split('\n').map((l, i) => (
+                <p key={i} className={l.startsWith('[') ? 'text-blue-400 font-bold mt-4 border-l-2 border-blue-500 pl-2' : ''}>{l}</p>
+              ))
+            ) : (
+              <div className="flex flex-col items-center justify-center h-full opacity-30">
+                <div className="w-12 h-12 border-2 border-slate-700 rounded-full animate-pulse flex items-center justify-center">?</div>
+                <p className="mt-4 uppercase font-black text-[9px]">Aguardando Prompt de Engenharia</p>
+              </div>
+            )}
+            {aiLoading && <div className="text-blue-500 animate-pulse font-bold mt-4 flex items-center gap-2"><div className="w-2 h-2 bg-blue-500 rounded-full animate-bounce"></div> COMPILANDO DADOS TÉCNICOS...</div>}
+          </div>
+
+          <div className="flex gap-2 bg-slate-800/50 p-3 rounded-xl border border-slate-700">
+            <input 
+              type="text" 
+              className="flex-1 bg-transparent border-none outline-none text-xs placeholder-slate-600" 
+              placeholder="Ex: Qual o cabo ideal para motor 50CV a 150m?"
+              onKeyDown={(e) => e.key === 'Enter' && callSeniorEngineerAI('chat', (e.target as HTMLInputElement).value)}
+            />
+            <button className="text-blue-400 font-black px-2">➔</button>
+          </div>
+        </div>
+      </div>
+
+      {/* VIEWPORT DO DOCUMENTO */}
+      <div className="w-full flex-1 overflow-y-auto py-12 flex flex-col items-center gap-12">
+        <div ref={reportRef} className="flex flex-col gap-10">
+          {pages.map((page, pIdx) => (
+            <div 
+              id={`page-${page.id}`} 
+              key={page.id}
+              className="bg-white w-[210mm] min-h-[297mm] shadow-[0_15px_45px_rgba(0,0,0,0.1)] relative flex flex-col p-[25mm] border border-slate-300"
+            >
+              {/* Header de Documento Oficial */}
+              <div className="flex justify-between items-end border-b-2 border-slate-800 pb-6 mb-12">
+                <div className="h-16 flex items-center">
+                  {headerImage ? (
+                    <img src={headerImage} className="max-h-full" alt="Logo" />
+                  ) : (
+                    <div onClick={() => !isLocked && document.getElementById('logo-up')?.click()} className="cursor-pointer border-2 border-dashed border-slate-200 px-4 py-2 text-[10px] font-black text-slate-300 uppercase">Logo da Empresa</div>
+                  )}
+                  <input type="file" id="logo-up" className="hidden" onChange={(e) => {
+                    const f = e.target.files?.[0];
+                    if (f) {
+                      const r = new FileReader();
+                      r.onloadend = () => setHeaderImage(r.result as string);
+                      r.readAsDataURL(f);
+                    }
+                  }} />
+                </div>
+                <div className="text-right flex flex-col items-end">
+                  <span className="text-[13px] font-black text-slate-950 tracking-tighter">LAUDO DE ENGENHARIA ELÉTRICA</span>
+                  <span className="text-[9px] font-bold text-slate-400 mt-1">{currentDate} | CAMPO FORTE PRO</span>
+                </div>
+              </div>
+
+              <textarea 
+                className="w-full text-4xl font-black uppercase text-slate-950 bg-transparent border-none focus:outline-none resize-none overflow-hidden mb-12"
+                rows={1} value={page.title}
+                onChange={(e) => setPages(pages.map(p => p.id === page.id ? { ...p, title: e.target.value } : p))}
+                disabled={isLocked}
+              />
+
+              {/* Conteúdo do Editor */}
+              <div className="flex flex-col gap-8 flex-1">
+                {page.type === 'report' && page.content.map(item => (
                   <div key={item.id} className="relative group">
-                    <textarea 
-                      className="w-full text-xl leading-[1.6] text-justify bg-white resize-none focus:outline-none placeholder-slate-200 p-0 border-none overflow-hidden" 
-                      placeholder="Inicie a descrição técnica..." 
-                      rows={1} 
-                      value={item.value} 
-                      onChange={(e) => updateItem(item.id, e.target.value)} 
-                      disabled={isLocked} 
-                      onInput={(e) => {
-                        const target = e.target as HTMLTextAreaElement;
-                        target.style.height = 'auto';
-                        target.style.height = target.scrollHeight + 'px';
-                      }} 
-                    />
-                    {!isLocked && (
-                      <button onClick={() => removeItem(item.id)} className="absolute -left-12 top-0 opacity-0 group-hover:opacity-100 text-slate-300 hover:text-red-500 transition-all no-print text-3xl">×</button>
-                    )}
-                  </div>
-                );
-              } else if (item.type === 'motor') {
-                return (
-                  <div key={item.id} className="relative my-2 group w-fit self-start no-print">
-                    <button onClick={() => removeItem(item.id)} className="absolute -right-6 top-0 bg-slate-900 text-white w-5 h-5 rounded-full text-[10px] flex items-center justify-center z-20 hover:bg-red-600 transition">×</button>
-                    <div className="border border-slate-200 bg-slate-50 p-3 flex items-center gap-4 rounded-sm shadow-sm">
-                      <MotorImg />
-                      <div className="flex flex-col">
-                        <span className="text-[10px] font-black text-slate-400 uppercase">Seleção de Motor</span>
-                        <select 
-                          className="text-lg font-bold bg-transparent border-none p-0 cursor-pointer text-slate-900 focus:outline-none"
-                          value={item.value}
-                          onChange={(e) => updateItem(item.id, e.target.value)}
-                        >
-                          {WEG_MOTORS.map(m => <option key={m.cv} value={m.cv}>{m.cv} CV - Trifásico</option>)}
-                        </select>
-                      </div>
-                    </div>
-                  </div>
-                );
-              } else if (item.type === 'summary') {
-                const projectMotors = contentItems
-                  .filter(i => i.type === 'motor')
-                  .map(i => getMotorByCv(parseFloat(i.value)))
-                  .filter((m): m is WegMotorData => !!m);
-                const summary = calculateGeneralSummary(projectMotors);
-                return (
-                  <div key={item.id} className="relative my-8 group w-full page-break">
-                    {!isLocked && <button onClick={() => removeItem(item.id)} className="absolute -right-8 top-0 bg-slate-900 text-white w-6 h-6 rounded-full text-xs flex items-center justify-center no-print z-20 hover:bg-red-600 transition">×</button>}
-                    <div className="border-t-4 border-b-4 border-slate-900 py-8 px-2 flex flex-col gap-10">
-                      <div className="flex justify-between items-end border-b border-slate-200 pb-4">
-                        <h3 className="text-2xl font-bold uppercase tracking-widest">Dimensionamento Consolidado</h3>
-                        <span className="text-xl font-black">{summary.motorCount} Motores</span>
-                      </div>
-                      
-                      {/* Dimensionamento de Cada Motor */}
-                      <div className="flex flex-col gap-6">
-                        {projectMotors.map((m, idx) => {
-                          const dim = calculateDimensioning(m);
+                    {item.type === 'text' ? (
+                      <textarea 
+                        className="w-full text-[12pt] leading-[1.8] text-justify bg-transparent border-none focus:outline-none resize-none overflow-hidden font-medium text-slate-800"
+                        placeholder="Inicie o parecer aqui..."
+                        value={item.value}
+                        onChange={(e) => updateItem(page.id, item.id, e.target.value)}
+                        onInput={(e) => { (e.target as any).style.height = 'auto'; (e.target as any).style.height = (e.target as any).scrollHeight + 'px'; }}
+                        disabled={isLocked}
+                      />
+                    ) : (
+                      <div className="bg-slate-50 border-l-[12px] border-blue-700 p-6 rounded-xl flex flex-col md:flex-row gap-8 shadow-sm">
+                        <div className="flex items-center gap-4">
+                          <div className="w-10 h-10 bg-white rounded-lg flex items-center justify-center border border-slate-200">
+                             <span className="font-black text-blue-700">W</span>
+                          </div>
+                          <select 
+                            className="text-xl font-black bg-transparent border-none outline-none appearance-none cursor-pointer"
+                            value={item.value} onChange={(e) => updateItem(page.id, item.id, e.target.value)} disabled={isLocked}
+                          >
+                            {WEG_MOTORS.map(m => <option key={m.cv} value={m.cv}>{m.cv} CV | W22 IE3</option>)}
+                          </select>
+                        </div>
+                        {(() => {
+                          const m = getMotorByCv(parseFloat(item.value));
+                          if (!m) return null;
+                          const d = calculateDimensioning(m);
                           return (
-                            <div key={idx} className="border border-slate-100 p-4 bg-slate-50 grid grid-cols-4 gap-4 text-center items-center">
-                              <div className="flex flex-col items-start border-r border-slate-200">
-                                <span className="text-[10px] font-bold text-slate-400 uppercase">Potência</span>
-                                <span className="text-lg font-bold">{m.cv} CV</span>
-                              </div>
-                              <div className="flex flex-col">
-                                <span className="text-[10px] font-bold text-slate-400 uppercase">Disjuntor</span>
-                                <span className="text-sm font-black">{dim.circuitBreaker}</span>
-                              </div>
-                              <div className="flex flex-col">
-                                <span className="text-[10px] font-bold text-slate-400 uppercase">Cabo</span>
-                                <span className="text-sm font-black text-blue-700">{dim.cableSize}</span>
-                              </div>
-                              <div className="flex flex-col">
-                                <span className="text-[10px] font-bold text-slate-400 uppercase">Partida</span>
-                                <span className="text-sm font-black">{dim.softStarter || dim.contactor}</span>
-                              </div>
+                            <div className="grid grid-cols-2 lg:grid-cols-4 gap-6 border-l-2 border-slate-200 pl-8">
+                              <div className="flex flex-col"><span className="text-[8px] font-black uppercase text-slate-400">Cabo</span><span className="text-xs font-black text-blue-600">{d.cableSize}</span></div>
+                              <div className="flex flex-col"><span className="text-[8px] font-black uppercase text-slate-400">Proteção</span><span className="text-xs font-black">{d.circuitBreaker}</span></div>
+                              <div className="flex flex-col"><span className="text-[8px] font-black uppercase text-slate-400">Contator</span><span className="text-xs font-black">{d.contactor}</span></div>
+                              <div className="flex flex-col"><span className="text-[8px] font-black uppercase text-blue-400">Inversor</span><span className="text-xs font-black text-indigo-600">{d.softStarter || "N/A"}</span></div>
                             </div>
                           );
-                        })}
+                        })()}
                       </div>
-
-                      {/* Totais de Carga */}
-                      <div className="grid grid-cols-2 gap-x-12 gap-y-4 pt-4 border-t border-slate-900">
-                        <div className="flex justify-between border-b border-slate-100 py-1"><span>Potência Total:</span><span className="font-bold">{summary.totalCv} CV</span></div>
-                        <div className="flex justify-between border-b border-slate-100 py-1"><span>Corrente Total:</span><span className="font-bold">{summary.totalIn} A</span></div>
-                        <div className="flex justify-between border-b border-slate-100 py-1"><span>Pico de Partida:</span><span className="font-bold text-red-600">{summary.totalIp.toFixed(1)} A</span></div>
-                        <div className="flex justify-between border-b border-slate-900 py-1 font-bold"><span>Disjuntor Geral Sugerido:</span><span className="text-blue-700">{summary.recommendedMainBreaker}</span></div>
-                      </div>
-                    </div>
+                    )}
                   </div>
-                );
-              }
-              return null;
-            })}
-          </div>
+                ))}
+
+                {page.type === 'summary' && (
+                  <div className="flex flex-col gap-12">
+                     <table className="w-full text-xs text-center border-collapse">
+                        <thead className="bg-slate-950 text-white uppercase font-black">
+                          <tr>
+                            <th className="p-3 text-left">Motor</th>
+                            <th className="p-3">In (A)</th>
+                            <th className="p-3">Proteção</th>
+                            <th className="p-3">Cabo</th>
+                            <th className="p-3">Partida</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {pages.flatMap(p => p.content).filter(i => i.type === 'motor').map((item, idx) => {
+                            const m = getMotorByCv(parseFloat(item.value))!;
+                            const d = calculateDimensioning(m);
+                            return (
+                              <tr key={idx} className="border-b border-slate-100 font-bold">
+                                <td className="p-3 text-left">{m.cv} CV</td>
+                                <td className="p-3">{m.currentIn} A</td>
+                                <td className="p-3">{d.circuitBreaker.split(' ')[0]}</td>
+                                <td className="p-3 text-blue-700">{d.cableSize}</td>
+                                <td className="p-3 text-[10px]">{d.softStarter || "DIRETA"}</td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                     </table>
+                     
+                     {(() => {
+                        const motors = pages.flatMap(p => p.content).filter(i => i.type === 'motor').map(i => getMotorByCv(parseFloat(i.value))!).filter(Boolean);
+                        const s = calculateGeneralSummary(motors);
+                        return (
+                          <div className="grid grid-cols-2 gap-10 border-t-4 border-slate-950 pt-10">
+                            <div className="space-y-3">
+                              <h4 className="text-xs font-black uppercase text-blue-600">Totalização da Carga</h4>
+                              <div className="flex justify-between text-sm"><span>Potência Total:</span><span className="font-black">{s.totalCv} CV</span></div>
+                              <div className="flex justify-between text-sm"><span>Corrente Nominal:</span><span className="font-black">{s.totalIn} A</span></div>
+                              <div className="flex justify-between text-sm text-red-600 font-bold"><span>Demanda de Pico:</span><span className="font-black">{s.totalIp} A</span></div>
+                            </div>
+                            <div className="bg-slate-950 text-white p-8 rounded-3xl flex flex-col items-center justify-center">
+                              <span className="text-[10px] font-black uppercase opacity-60 mb-2">Disjuntor Geral Sugerido</span>
+                              <span className="text-5xl font-black text-blue-400 tracking-tighter">{s.recommendedMainBreaker}</span>
+                            </div>
+                          </div>
+                        );
+                     })()}
+                  </div>
+                )}
+              </div>
+
+              {/* Rodapé Word */}
+              <div className="mt-auto pt-8 border-t border-slate-100 flex justify-between items-end text-[10px] font-black text-slate-300 uppercase tracking-widest">
+                <span>Campo Forte Engineering Solutions</span>
+                <span>Página {pIdx + 1} de {pages.length}</span>
+              </div>
+            </div>
+          ))}
         </div>
+      </div>
 
-        {/* PÁGINAS ADICIONAIS: LISTA DE MATERIAIS */}
-        {contentItems.filter(item => item.type === 'list').map((item) => (
-          <div key={item.id} className="bg-white min-h-[297mm] p-[20mm] relative flex flex-col shadow-2xl mb-4 page-break-sheet" style={{ fontFamily: "'Times New Roman', Times, serif" }}>
-            <LogoHeader />
-            
-            <header className="mb-10 w-full flex justify-between items-center border-b-2 border-slate-900 pb-2">
-              <h2 className="text-3xl font-bold uppercase tracking-[0.2em]">Lista de Materiais</h2>
-              {!isLocked && (
-                <button onClick={() => removeItem(item.id)} className="bg-red-50 text-red-500 px-3 py-1 rounded text-[10px] font-black no-print hover:bg-red-100 transition">Remover Página</button>
-              )}
-            </header>
-
-            <textarea 
-              className="w-full flex-1 text-xl leading-[1.8] bg-white resize-none focus:outline-none placeholder-slate-200 py-2 border-none overflow-hidden"
-              placeholder="Digite aqui os itens, quantidades e marcas..."
-              value={item.value}
-              onChange={(e) => updateItem(item.id, e.target.value)}
-              disabled={isLocked}
-              onInput={(e) => {
-                const target = e.target as HTMLTextAreaElement;
-                target.style.height = 'auto';
-                target.style.height = target.scrollHeight + 'px';
-              }}
-            />
-
-            <footer className="mt-auto pt-8 text-right border-t border-slate-100 italic text-slate-500">
-              Data de Emissão: {currentDate}
-            </footer>
-          </div>
-        ))}
+      {/* WORD STATUS BAR */}
+      <div className="w-full bg-[#2b579a] text-white px-4 py-1 text-[10px] font-bold flex justify-between fixed bottom-0 z-[100] shadow-inner no-print">
+        <div className="flex gap-6">
+          <span>PÁGINA {pages.length}</span>
+          <span>SISTEMA: TRIFÁSICO 380V</span>
+          <span className="text-blue-300">ESTADO: NBR 5410 ATIVA</span>
+        </div>
+        <div className="flex gap-4">
+          <span className="animate-pulse">● ENGENHEIRO IA ONLINE</span>
+          <span>100% ZOOM</span>
+        </div>
       </div>
 
       <style>{`
-        textarea::placeholder { color: #f1f5f9; }
-        .page-break { page-break-inside: avoid; }
-        .page-break-sheet { break-before: page; }
-        @media print {
-          body { background: white !important; padding: 0 !important; }
-          .no-print { display: none !important; }
-          .shadow-2xl { box-shadow: none !important; }
-          .mt-8 { margin-top: 0 !important; }
-          .mb-4 { margin-bottom: 0 !important; }
-          .p-[20mm] { padding: 15mm !important; }
-          .bg-slate-300 { background: white !important; }
-        }
+        ::-webkit-scrollbar { width: 10px; }
+        ::-webkit-scrollbar-track { background: #f1f1f1; }
+        ::-webkit-scrollbar-thumb { background: #2b579a; border-radius: 5px; }
+        body { -webkit-font-smoothing: antialiased; }
       `}</style>
     </div>
   );
