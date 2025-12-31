@@ -30,3 +30,30 @@ export interface ProjectSummary {
   recommendedMainBreaker: string;
   softStarterCount: number;
 }
+
+export interface SummaryItemData {
+  motorCv: number;
+  in: number;
+  ip: number;
+  cable: string;
+  breaker: string;
+  contactor: string;
+  vfd?: string;
+}
+
+export interface WidgetData {
+  id: string;
+  type: 'text' | 'motor' | 'summary-list';
+  value: string; // Para 'text' e 'motor'
+  items?: SummaryItemData[]; // Para 'summary-list'
+  width: number;
+  height: number;
+  fontSize: number;
+}
+
+export interface PageData {
+  id: string;
+  type: 'report' | 'summary';
+  title: string;
+  widgets: WidgetData[];
+}
